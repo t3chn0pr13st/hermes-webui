@@ -4230,6 +4230,12 @@ function setBusy(v){
 const _queueRenderKeys={};  // per-session fingerprint to avoid redundant rebuilds
 const _queueCollapsed={};   // per-session: true when user explicitly collapsed the card
 
+function _canSteerQueuedItem(sid, entry){
+  const text=String(entry&&(entry.text||entry.message||entry.content||'')||'').trim();
+  const files=entry&&Array.isArray(entry.files)?entry.files.filter(Boolean):[];
+  return !!(text&&!files.length&&S.session&&S.session.session_id===sid&&S.busy&&S.activeStreamId&&typeof _trySteer==='function');
+}
+
 function _renderQueueChips(sid){
   const card=document.getElementById('queueCard');
   const inner=document.getElementById('queueChips');
@@ -4407,6 +4413,33 @@ function _renderQueueChips(sid){
       badges.appendChild(mb);
     }
     // Profile badge removed — drain cannot server-switch profiles so badge was misleading
+    let steerBtn=null;
+    if(_canSteerQueuedItem(sid,entry)){
+      steerBtn=document.createElement('button');
+      steerBtn.className='queue-card-btn queue-card-steer-btn';
+      steerBtn.setAttribute('aria-label','Steer current response with this queued message');
+      steerBtn.setAttribute('draggable','false');
+      steerBtn.title='Steer current response with this queued message';
+      steerBtn.innerHTML=(typeof li==='function'?li('shuffle',12):'')+'Steer now';
+      steerBtn.onclick=async()=>{
+        const liveQ=_getSessionQueue(sid,false);
+        const idx=_entryTs!=null?liveQ.findIndex(e=>e&&e._queued_at===_entryTs):i;
+        const latest=idx!==-1?liveQ[idx]:entry;
+        const latestFiles=latest&&Array.isArray(latest.files)?latest.files.filter(Boolean):[];
+        if(latestFiles.length){
+          if(typeof showToast==='function') showToast('Queued attachments cannot be steered; they will send after the current turn.',2600,'warning');
+          return;
+        }
+        const steerText=String(latest&&(latest.text||latest.message||latest.content||'')||'').trim();
+        if(!steerText) return;
+        if(idx!==-1) liveQ.splice(idx,1);
+        if(!liveQ.length){delete SESSION_QUEUES[sid];try{sessionStorage.removeItem('hermes-queue-'+sid);}catch(_){}}
+        else{SESSION_QUEUES[sid]=[...liveQ];try{sessionStorage.setItem('hermes-queue-'+sid,JSON.stringify(liveQ));}catch(_){}}
+        delete _queueRenderKeys[sid];
+        updateQueueBadge(sid);
+        await _trySteer(steerText, true);
+      };
+    }
     // Delete button
     const delBtn=document.createElement('button');
     delBtn.className='queue-card-icon-btn';
@@ -4426,6 +4459,7 @@ function _renderQueueChips(sid){
     row.appendChild(drag);
     row.appendChild(msgSpan);
     if(badges.childNodes.length) row.appendChild(badges);
+    if(steerBtn) row.appendChild(steerBtn);
     row.appendChild(delBtn);
     inner.appendChild(row);
   });
