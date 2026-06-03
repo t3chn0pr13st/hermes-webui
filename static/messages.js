@@ -1564,6 +1564,28 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       if(typeof setStatus==='function') setStatus('');
     }
   }
+  function _cancelRefreshStillCurrent(){
+    if(_sendInProgressSid===activeSid) return false;
+    if(!_isActiveSession()) return true;
+    const localStream=S.activeStreamId
+      ||(S.session&&S.session.active_stream_id)
+      ||(INFLIGHT[activeSid]&&INFLIGHT[activeSid].streamId)
+      ||null;
+    return !localStream||localStream===streamId;
+  }
+  function _settleCancelledStreamForOwner(){
+    if(_isActiveSession()){
+      S.activeStreamId=null;
+      if(S.session){
+        S.session.active_stream_id=null;
+        S.session.pending_user_message=null;
+        S.session.pending_attachments=[];
+        S.session.pending_started_at=null;
+      }
+      if(S.busy) _queueDrainSid=activeSid;
+    }
+    _setActivePaneIdleIfOwner();
+  }
   function persistInflightState(){
     const inflight=INFLIGHT[activeSid];
     if(!inflight||typeof saveInflightState!=='function') return;
@@ -3646,16 +3668,14 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       _clearOwnerInflightState();
       _clearApprovalForOwner();
       _clearClarifyForOwner('cancelled');
-      if(S.session&&S.session.session_id===activeSid){
-        S.activeStreamId=null;
-      }
+      _settleCancelledStreamForOwner();
       // Fetch latest session from server to get accurate message list (includes cancel status)
       // This ensures messages stay in sync with server, fixing race condition where local
       // "*Task cancelled.*" message gets lost when done event overwrites S.messages
       (async()=>{
         try{
           const data=await api(`/api/session?session_id=${encodeURIComponent(activeSid)}`);
-          if(data&&data.session&&S.session&&S.session.session_id===activeSid){
+          if(data&&data.session&&S.session&&S.session.session_id===activeSid&&_cancelRefreshStillCurrent()){
             S.session=data.session;
             const _nextMsgs3018=(data.session.messages||[]).filter(m=>m&&m.role);
             S.messages=_carryForwardEphemeralTurnFields(S.messages||[], _nextMsgs3018);
@@ -3675,7 +3695,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
         }
       })();
       renderSessionList();
-      _setActivePaneIdleIfOwner();
     });
 
     for(const _runJournalEventName of ['token','interim_assistant','reasoning','tool','tool_complete','todo_state','approval','clarify','state_saved','title','title_status','context_status','goal','goal_continue','done','stream_end','pending_steer_leftover','compressing','compressed','metering','apperror','warning','error','cancel']){

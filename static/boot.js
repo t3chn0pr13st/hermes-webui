@@ -41,7 +41,14 @@ async function cancelStream(){
   // stream left to settle.
   if(respBody && respBody.cancelled===false && S.activeStreamId===streamId){
     S.activeStreamId=null;
-    setBusy(false);
+    if(S.session&&S.session.session_id===sid){
+      S.session.active_stream_id=null;
+      S.session.pending_user_message=null;
+      S.session.pending_attachments=[];
+      S.session.pending_started_at=null;
+    }
+    if(S.busy) setBusy(false);
+    else if(typeof updateSendBtn==='function') updateSendBtn();
     if(typeof setComposerStatus==='function') setComposerStatus('');
     else setStatus('');
     // /api/chat/cancel only exposes `cancelled:bool`, so we cannot
